@@ -5,6 +5,7 @@ diffusers==0.29.2
 transformers==4.42.3
 accelerate==0.31.0
 safetensors==0.4.3
+xformers==0.0.26.post1
 gtts==2.5.1
 moviepy==1.0.3
 google-generativeai==0.8.3
