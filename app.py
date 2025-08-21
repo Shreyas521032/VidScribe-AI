@@ -1,147 +1,214 @@
 import streamlit as st
-from gtts import gTTS
-from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips
-import google.generativeai as genai
 import os
+import re
+import gc
 import requests
+import base64
+import io
+
+# --- Main App Libraries ---
+import google.generativeai as genai
+from gtts import gTTS
+import ffmpeg
 from PIL import Image
 import numpy as np
-import io
+
+# --- Libraries for Local GPU Option ---
+try:
+    import torch
+    from diffusers import AutoPipelineForText2Image
+    IS_GPU_AVAILABLE = torch.cuda.is_available()
+except ImportError:
+    IS_GPU_AVAILABLE = False
+
 
 # --- Page Configuration ---
 st.set_page_config(
-    page_title="VidScribe AI (Optimized)",
-    page_icon="⚡",
-    layout="centered"
+    page_title="VidScribe AI",
+    page_icon="🎬",
+    layout="wide"
 )
 
-st.title("⚡ VidScribe AI (Optimized)")
-st.markdown("An optimized version that streams text and processes media faster.")
+st.title("🎬 VidScribe AI")
+st.markdown("Turn any topic into a short video with AI-generated narration and images.")
+
 
 # --- API Key Management ---
 st.sidebar.header("🔑 API Configuration")
-if 'api_key' not in st.session_state:
-    st.session_state.api_key = ''
-
-st.session_state.api_key = st.sidebar.text_input(
-    label="Enter your Google Gemini API Key", type="password", 
-    placeholder="Paste your key here...", value=st.session_state.api_key
+st.session_state.gemini_key = st.sidebar.text_input(
+    label="Enter your Google Gemini API Key", type="password", placeholder="Paste Gemini key here..."
+)
+st.session_state.stability_key = st.sidebar.text_input(
+    label="Enter your Stability AI Key", type="password", placeholder="Paste Stability AI key here..."
+)
+st.session_state.hf_token = st.sidebar.text_input(
+    label="Enter your Hugging Face Token", type="password", placeholder="Paste Hugging Face token here..."
 )
 
-# --- Helper Functions (Optimized) ---
 
-def generate_story_stream(topic):
-    """OPTIMIZATION: Generates a story using the Gemini API's streaming feature."""
-    if not st.session_state.api_key:
-        st.error("Please enter your Gemini API Key in the sidebar.")
-        return
-        
-    genai.configure(api_key=st.session_state.api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash') # Using Flash for speed
-    prompt = f"Write a captivating short story about '{topic}'. The story should be about 3-4 paragraphs long."
-    
-    # Stream the response
+# --- Helper Functions ---
+
+# --- Text Generation ---
+def generate_story_with_gemini(topic):
+    genai.configure(api_key=st.session_state.gemini_key)
+    model = genai.GenerativeModel('gemini-1.5-flash')
+    prompt = f"Write a captivating short story about '{topic}'. The story should have a clear narrative arc and be approximately 3-4 paragraphs long."
     response_stream = model.generate_content(prompt, stream=True)
-    
-    # Use st.write_stream to display the content as it arrives
     return st.write_stream(response_stream)
 
-def generate_images_in_memory(image_prompts):
-    """
-    OPTIMIZATION: Generates images using a generic API and processes them in memory.
-    This function is a placeholder for any image generation API call.
-    """
-    image_arrays = []
+def generate_story_with_hf(topic):
+    API_URL = "https://api-inference.huggingface.co/models/meta-llama/Meta-Llama-3-8B-Instruct"
+    headers = {"Authorization": f"Bearer {st.session_state.hf_token}"}
+    prompt = f"You are a master storyteller. Write a captivating short story about '{topic}'. The story should have rich descriptions and be 3-4 paragraphs long."
+    response = requests.post(API_URL, headers=headers, json={"inputs": prompt, "parameters": {"max_new_tokens": 512, "return_full_text": False}})
+    if response.status_code != 200:
+        raise ConnectionError(f"Hugging Face API Error: {response.text}")
+    return response.json()[0]['generated_text']
+
+
+# --- Image Generation ---
+@st.cache_resource(show_spinner="Loading local image models...")
+def load_diffusion_pipelines():
+    base = AutoPipelineForText2Image.from_pretrained("stabilityai/stable-diffusion-xl-base-1.0", torch_dtype=torch.float16, variant="fp16", use_safensors=True).to("cuda")
+    refiner = AutoPipelineForText2Image.from_pretrained("stabilityai/stable-diffusion-xl-refiner-1.0", torch_dtype=torch.float16, use_safensors=True, variant="fp16").to("cuda")
+    return base, refiner
+
+def generate_images_local(image_prompts):
+    base, refiner = load_diffusion_pipelines()
+    image_files = []
     
-    # Placeholder: Replace with your actual image generation API call
-    # For this example, we'll download placeholder images.
+    latent_images = []
+    for prompt in image_prompts:
+        styled_prompt = f"{prompt}, masterpiece, 8k, high detail, cinematic lighting"
+        negative_prompt = "ugly, blurry, deformed, disfigured, poor details, bad anatomy"
+        latent = base(prompt=styled_prompt, negative_prompt=negative_prompt, output_type="latent").images
+        latent_images.append(latent)
+
+    for i, latent in enumerate(latent_images):
+        prompt = image_prompts[i]
+        styled_prompt = f"{prompt}, masterpiece, 8k, high detail, cinematic lighting"
+        negative_prompt = "ugly, blurry, deformed, disfigured, poor details, bad anatomy"
+        img = refiner(prompt=styled_prompt, negative_prompt=negative_prompt, image=latent).images[0]
+        filename = f"generated_image_{i}.png"
+        img.save(filename)
+        image_files.append(filename)
+    
+    return image_files
+    
+def generate_images_api(image_prompts):
+    image_files = []
     for i, prompt in enumerate(image_prompts):
         st.write(f"🖼️ Creating image for: '{prompt[:50]}...'")
-        # Replace this URL with your API endpoint
-        response = requests.get(f"https://picsum.photos/1024/1024?random={i}")
+        styled_prompt = f"{prompt}, cinematic, masterpiece, 8k, high detail"
+        response = requests.post(
+            "https://api.stability.ai/v1/generation/stable-diffusion-v1-6/text-to-image",
+            headers={"Authorization": f"Bearer {st.session_state.stability_key}", "Accept": "application/json"},
+            json={"text_prompts": [{"text": styled_prompt}], "samples": 1, "steps": 30, "height": 1024, "width": 1024}
+        )
+        if response.status_code != 200:
+            raise ConnectionError(f"Stability AI API Error: {response.text}")
         
-        if response.status_code == 200:
-            # OPTIMIZATION: Convert image bytes to a numpy array directly in memory
-            image_bytes = io.BytesIO(response.content)
-            pil_image = Image.open(image_bytes)
-            image_arrays.append(np.array(pil_image))
-        else:
-            st.error(f"Failed to fetch placeholder image. Status: {response.status_code}")
+        data = response.json()
+        filename = f"generated_image_{i}.png"
+        with open(filename, "wb") as f:
+            f.write(base64.b64decode(data["artifacts"][0]["base64"]))
+        image_files.append(filename)
+    return image_files
 
-    return image_arrays
 
-def create_video_fast(story_text, image_arrays):
-    """OPTIMIZATION: Creates video with faster encoding settings."""
-    # 1. Create Audio (gTTS requires file I/O)
+# --- Video Generation ---
+def create_video_with_ffmpeg(story_text, image_files):
     narration_file = "narration.mp3"
-    try:
-        tts = gTTS(story_text, lang='en')
-        tts.save(narration_file)
-        audioclip = AudioFileClip(narration_file)
-    except Exception as e:
-        st.error(f"Failed to create audio: {e}")
-        return None, None
+    tts = gTTS(story_text, lang='en')
+    tts.save(narration_file)
 
-    # 2. Create Video Clips from in-memory image arrays
-    duration_per_image = audioclip.duration / len(image_arrays)
-    clips = [ImageClip(img_array).set_duration(duration_per_image) for img_array in image_arrays]
-    
-    # 3. Assemble and Write Video File
-    slideshow = concatenate_videoclips(clips, method="compose")
-    final_video = slideshow.set_audio(audioclip)
-    
+    audio_info = ffmpeg.probe(narration_file)
+    duration = float(audio_info['format']['duration'])
+    duration_per_image = duration / len(image_files)
+
+    image_inputs = [ffmpeg.input(img, t=duration_per_image, loop=1, framerate=24) for img in image_files]
+    video_stream = ffmpeg.concat(*image_inputs, v=1, a=0)
+    audio_stream = ffmpeg.input(narration_file)
+
     video_filename = "final_video.mp4"
-    # OPTIMIZATION: Use a faster preset and multiple threads for encoding
-    final_video.write_videofile(
-        video_filename, 
-        fps=24, 
-        codec='libx264',
-        preset='ultrafast', # Sacrifices file size for speed
-        threads=4          # Use 4 CPU cores
+    (
+        ffmpeg
+        .output(video_stream, audio_stream, video_filename, vcodec='libx24', acodec='aac', pix_fmt='yuv420p')
+        .overwrite_output()
+        .run(quiet=True)
     )
-
     return video_filename, narration_file
 
+
 # --- Main App Interface ---
+st.sidebar.header("⚙️ Model Selection")
+text_model_option = st.sidebar.selectbox("Choose a Storyteller:", ("Google Gemini", "Hugging Face (Llama 3)"))
+
+# Disable GPU option if torch/cuda is not available
+image_model_options = ["Stability AI API (CPU Friendly)"]
+if IS_GPU_AVAILABLE:
+    image_model_options.append("Local SDXL (Requires GPU)")
+image_model_option = st.sidebar.selectbox("Choose an Image Artist:", image_model_options)
+
+
 topic = st.text_input("Enter a topic for your video:", placeholder="e.g., A robot discovering a garden")
 
 if st.button("Generate Video ✨", type="primary"):
-    if not st.session_state.api_key:
-        st.error("Please enter your Gemini API key in the sidebar.", icon="🔑")
+    # --- API Key Validation ---
+    key_needed_msg = ""
+    if text_model_option == "Google Gemini" and not st.session_state.gemini_key:
+        key_needed_msg = "Please enter your Google Gemini API key."
+    elif text_model_option == "Hugging Face (Llama 3)" and not st.session_state.hf_token:
+        key_needed_msg = "Please enter your Hugging Face API token."
+    elif image_model_option == "Stability AI API (CPU Friendly)" and not st.session_state.stability_key:
+        key_needed_msg = "Please enter your Stability AI API key."
+
+    if key_needed_msg:
+        st.error(key_needed_msg, icon="🔑")
     elif not topic:
         st.warning("Please enter a topic to continue.", icon="✍️")
     else:
-        # Use a single status context manager for the whole process
         with st.status("🎬 Starting video generation...", expanded=True) as status:
             try:
-                # Step 1: Generate and stream the story
-                status.update(label="Step 1: Writing the story with Gemini...")
+                # 1. Generate Story
+                status.update(label="Step 1: Writing the story...")
                 story_container = st.empty()
                 with story_container.container():
                     st.subheader("📝 Your AI-Generated Story")
-                    story_text = generate_story_stream(topic)
+                    if text_model_option == "Google Gemini":
+                        story_text = generate_story_with_gemini(topic)
+                    else:
+                        story_text = generate_story_with_hf(topic)
+                        st.markdown(story_text) # Display non-streamed text
                 
-                # Step 2: Generate images
+                # 2. Generate Images
                 status.update(label="Step 2: Creating images...")
-                # Using placeholder prompts for this example
-                image_prompts = [f"A cinematic photo of {topic}", f"An artistic painting of {topic}"]
-                image_arrays = generate_images_in_memory(image_prompts)
+                sentences = re.split(r'(?<!\w\w.)(?<![A-Z][a-z].)(?<=\.|\?)\s', story_text)
+                image_prompts = [sentences[0], sentences[-1]] if len(sentences) >= 2 else [topic, topic]
                 
-                # Step 3: Create the video
+                if image_model_option == "Stability AI API (CPU Friendly)":
+                    image_files = generate_images_api(image_prompts)
+                else: # Local GPU
+                    image_files = generate_images_local(image_prompts)
+                
+                st.info("🖼️ Images Generated")
+                cols = st.columns(len(image_files))
+                for i, img_file in enumerate(image_files):
+                    cols[i].image(img_file, caption=f"Image {i+1}")
+
+                # 3. Create Video
                 status.update(label="Step 3: Assembling the final video...")
-                video_file, narration_file = create_video_fast(story_text, image_arrays)
+                video_file, narration_file = create_video_with_ffmpeg(story_text, image_files)
 
                 status.update(label="✅ Process Complete!", state="complete")
                 
-                # Display final video
                 st.subheader("🎉 Your AI-Generated Video")
                 st.video(open(video_file, 'rb').read())
                 st.download_button("Download Video", open(video_file, 'rb').read(), file_name=video_file, mime='video/mp4')
                 
                 # Clean up temp files
-                for f in [narration_file, video_file]:
-                    if f and os.path.exists(f):
-                        os.remove(f)
+                for f in image_files + [narration_file, video_file]:
+                    if os.path.exists(f): os.remove(f)
 
             except Exception as e:
                 st.error(f"An error occurred: {e}", icon="🚨")
