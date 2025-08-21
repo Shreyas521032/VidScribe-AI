@@ -1,12 +1,5 @@
 streamlit
-torch
-torchvision
-diffusers
-transformers
-accelerate
-safetensors
-xformers
 gtts
 moviepy
 google-generativeai
-invisible_watermark
+requests
