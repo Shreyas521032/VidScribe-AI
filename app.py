@@ -38,7 +38,7 @@ with st.sidebar:
             label="Google Gemini API Key", type="password", placeholder="Paste Gemini key here...",
             help="[Get your key from Google AI Studio](https://aistudio.google.com/apikey)"
         )
-    elif "Hugging Face" in text_model_option or "Hugging Face" in image_model_option:
+    if "Hugging Face" in text_model_option or "Hugging Face" in image_model_option:
         st.session_state.hf_token = st.text_input(
             label="Hugging Face API Token", type="password", placeholder="Paste Hugging Face token here...",
             help="[Get your token from Hugging Face Settings](https://huggingface.co/settings/tokens)"
