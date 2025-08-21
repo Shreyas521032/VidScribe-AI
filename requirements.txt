@@ -1,7 +1,7 @@
-streamlit
-gtts
-moviepy
-google-generativeai
-requests
-moviepy
-Pillow
+streamlit==1.38.0
+gtts==2.5.1
+moviepy==1.0.3
+google-generativeai==0.8.3
+requests==2.32.3
+Pillow==10.6.0
+numpy==2.0.2
