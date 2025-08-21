@@ -70,7 +70,7 @@ def generate_story_with_hf(topic):
     return response.json()[0]['generated_text']
 
 def generate_images_with_hf_api(image_prompts):
-    API_URL = "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5"
+    API_URL = "https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5"
     headers = {"Authorization": f"Bearer {st.session_state.hf_token}"}
     image_files = []
     
