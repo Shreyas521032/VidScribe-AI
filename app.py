@@ -14,13 +14,13 @@ import numpy as np
 
 # --- Page Configuration ---
 st.set_page_config(
-    page_title="VidScribe AI",
+    page_title="GEN AI Assessment - II",
     page_icon="🎬",
     layout="wide"
 )
 
-st.title("🎬 VidScribe AI")
-st.markdown("Turn any topic into a short video with AI-generated narration and images.")
+st.title("🎬 GEN AI Assessment - II")
+st.markdown("This application performs the tasks outlined in the Generative AI assessment.")
 
 # --- API Key Management ---
 st.sidebar.header("🔑 API Configuration")
@@ -36,7 +36,6 @@ st.session_state.hf_token = st.sidebar.text_input(
 
 # --- Helper Functions ---
 
-# --- Text Generation ---
 def generate_story_with_gemini(topic):
     genai.configure(api_key=st.session_state.gemini_key)
     model = genai.GenerativeModel('gemini-1.5-flash')
@@ -53,7 +52,6 @@ def generate_story_with_hf(topic):
         raise ConnectionError(f"Hugging Face API Error: {response.text}")
     return response.json()[0]['generated_text']
 
-# --- Image Generation ---
 def generate_images_api(image_prompts):
     image_files = []
     for i, prompt in enumerate(image_prompts):
@@ -74,7 +72,6 @@ def generate_images_api(image_prompts):
         image_files.append(filename)
     return image_files
 
-# --- Video Generation ---
 def create_video_with_ffmpeg(story_text, image_files):
     narration_file = "narration.mp3"
     tts = gTTS(story_text, lang='en')
@@ -100,58 +97,59 @@ def create_video_with_ffmpeg(story_text, image_files):
 # --- Main App Interface ---
 st.sidebar.header("⚙️ Model Selection")
 text_model_option = st.sidebar.selectbox("Choose a Storyteller:", ("Google Gemini", "Hugging Face (Llama 3)"))
-# Image model is now API-only, so no selection is needed.
 st.sidebar.info("Image generation uses the Stability AI API.")
 
-topic = st.text_input("Enter a topic for your video:", placeholder="e.g., A robot discovering a garden")
+
+## ASSESSMENT STEP 1: Takes a problem statement from the user ##
+topic = st.text_input("1. Enter your problem statement / topic:", placeholder="e.g., A robot discovering a garden")
+
 
 if st.button("Generate Video ✨", type="primary"):
-    # --- API Key Validation ---
+    # --- API Key Validation (Corrected Logic) ---
     key_needed_msg = ""
-    if text_model_option == "Google Gemini" and not st.session_state.gemini_key:
+    if not st.session_state.stability_key:
+        key_needed_msg = "Please enter your Stability AI API key."
+    elif text_model_option == "Google Gemini" and not st.session_state.gemini_key:
         key_needed_msg = "Please enter your Google Gemini API key."
     elif text_model_option == "Hugging Face (Llama 3)" and not st.session_state.hf_token:
         key_needed_msg = "Please enter your Hugging Face API token."
-    
-    if not st.session_state.stability_key:
-        key_needed_msg = "Please enter your Stability AI API key."
 
     if key_needed_msg:
         st.error(key_needed_msg, icon="🔑")
     elif not topic:
         st.warning("Please enter a topic to continue.", icon="✍️")
     else:
-        with st.status("🎬 Starting video generation...", expanded=True) as status:
+        with st.status("🎬 Starting generation process...", expanded=True) as status:
             try:
-                # 1. Generate Story
-                status.update(label="Step 1: Writing the story...")
+                ## ASSESSMENT STEP 2: Creates a short story / write-up ##
+                status.update(label="Step 2: Creating story...")
                 story_container = st.empty()
                 with story_container.container():
-                    st.subheader("📝 Your AI-Generated Story")
+                    st.subheader("📝 2. Generated Story / Write-up")
                     if text_model_option == "Google Gemini":
                         story_text = generate_story_with_gemini(topic)
                     else:
                         story_text = generate_story_with_hf(topic)
                         st.markdown(story_text)
                 
-                # 2. Generate Images
-                status.update(label="Step 2: Creating images with Stability AI...")
+                ## ASSESSMENT STEP 3: Creates a set of images to support step-2 ##
+                status.update(label="Step 3: Creating images...")
                 sentences = re.split(r'(?<!\w\w.)(?<![A-Z][a-z].)(?<=\.|\?)\s', story_text)
                 image_prompts = [sentences[0], sentences[-1]] if len(sentences) >= 2 else [topic, topic]
                 image_files = generate_images_api(image_prompts)
                 
-                st.info("🖼️ Images Generated")
+                st.info("🖼️ 3. Supporting Images Generated")
                 cols = st.columns(len(image_files))
                 for i, img_file in enumerate(image_files):
                     cols[i].image(img_file, caption=f"Image {i+1}")
 
-                # 3. Create Video
-                status.update(label="Step 3: Assembling the final video...")
+                ## ASSESSMENT STEP 4: Creates a visual (audio+video) using steps 2 and 3 ##
+                status.update(label="Step 4: Creating visual (audio+video)...")
                 video_file, narration_file = create_video_with_ffmpeg(story_text, image_files)
 
                 status.update(label="✅ Process Complete!", state="complete")
                 
-                st.subheader("🎉 Your AI-Generated Video")
+                st.subheader("🎉 4. Final Visual (Audio + Video)")
                 st.video(open(video_file, 'rb').read())
                 st.download_button("Download Video", open(video_file, 'rb').read(), file_name=video_file, mime='video/mp4')
                 
@@ -161,3 +159,7 @@ if st.button("Generate Video ✨", type="primary"):
 
             except Exception as e:
                 st.error(f"An error occurred: {e}", icon="🚨")
+
+## ASSESSMENT FOOTER ##
+st.markdown("---")
+st.markdown("<p style='text-align: center;'>Crafted by Shreyas Kasture</p>", unsafe_allow_html=True)
