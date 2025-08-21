@@ -3,4 +3,3 @@ gtts
 moviepy
 google-generativeai
 requests
-torch
