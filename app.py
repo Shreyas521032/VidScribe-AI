@@ -61,7 +61,7 @@ def get_gemini_stream(topic):
     return model.generate_content(prompt, stream=True)
 
 def generate_story_with_hf(topic):
-    API_URL = "https://api-inference.huggingface.co/models/meta-llama/Meta-Llama-3-8B-Instruct"
+    API_URL = "https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct"
     headers = {"Authorization": f"Bearer {st.session_state.hf_token}"}
     prompt = f"'{topic}'"
     response = requests.post(API_URL, headers=headers, json={"inputs": prompt, "parameters": {"max_new_tokens": 512, "return_full_text": False}})
