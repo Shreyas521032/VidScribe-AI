@@ -39,14 +39,14 @@ st.session_state.hf_token = st.sidebar.text_input(
 def generate_story_with_gemini(topic):
     genai.configure(api_key=st.session_state.gemini_key)
     model = genai.GenerativeModel('gemini-1.5-flash')
-    prompt = f"Write a captivating short story about '{topic}'. The story should have a clear narrative arc and be approximately 3-4 paragraphs long."
+    prompt = f"'{topic}'"
     response_stream = model.generate_content(prompt, stream=True)
     return st.write_stream(response_stream)
 
 def generate_story_with_hf(topic):
     API_URL = "https://api-inference.huggingface.co/models/meta-llama/Meta-Llama-3-8B-Instruct"
     headers = {"Authorization": f"Bearer {st.session_state.hf_token}"}
-    prompt = f"You are a master storyteller. Write a captivating short story about '{topic}'. The story should have rich descriptions and be 3-4 paragraphs long."
+    prompt = f"'{topic}'"
     response = requests.post(API_URL, headers=headers, json={"inputs": prompt, "parameters": {"max_new_tokens": 512, "return_full_text": False}})
     if response.status_code != 200:
         raise ConnectionError(f"Hugging Face API Error: {response.text}")
@@ -56,7 +56,7 @@ def generate_images_api(image_prompts):
     image_files = []
     for i, prompt in enumerate(image_prompts):
         st.write(f"🖼️ Creating image for: '{prompt[:50]}...'")
-        styled_prompt = f"{prompt}, cinematic, masterpiece, 8k, high detail"
+        styled_prompt = f"{prompt}, cinematic, masterpiece, high detail"
         response = requests.post(
             "https://api.stability.ai/v1/generation/stable-diffusion-v1-6/text-to-image",
             headers={"Authorization": f"Bearer {st.session_state.stability_key}", "Accept": "application/json"},
@@ -96,7 +96,7 @@ def create_video_with_ffmpeg(story_text, image_files):
 
 # --- Main App Interface ---
 st.sidebar.header("⚙️ Model Selection")
-text_model_option = st.sidebar.selectbox("Choose a Storyteller:", ("Google Gemini", "Hugging Face (Llama 3)"))
+text_model_option = st.sidebar.selectbox("Choose a Model:", ("Google Gemini", "Hugging Face (Llama 3)"))
 st.sidebar.info("Image generation uses the Stability AI API.")
 
 
@@ -104,7 +104,7 @@ st.sidebar.info("Image generation uses the Stability AI API.")
 topic = st.text_input("1. Enter your problem statement / topic:", placeholder="e.g., A robot discovering a garden")
 
 
-if st.button("Generate Video ✨", type="primary"):
+if st.button("Start operation✨", type="primary"):
     # --- API Key Validation (Corrected Logic) ---
     key_needed_msg = ""
     if not st.session_state.stability_key:
