@@ -1,7 +1,6 @@
 import streamlit as st
 import os
 import re
-import gc
 import requests
 import base64
 import io
@@ -13,15 +12,6 @@ import ffmpeg
 from PIL import Image
 import numpy as np
 
-# --- Libraries for Local GPU Option ---
-try:
-    import torch
-    from diffusers import AutoPipelineForText2Image
-    IS_GPU_AVAILABLE = torch.cuda.is_available()
-except ImportError:
-    IS_GPU_AVAILABLE = False
-
-
 # --- Page Configuration ---
 st.set_page_config(
     page_title="VidScribe AI",
@@ -31,7 +21,6 @@ st.set_page_config(
 
 st.title("🎬 VidScribe AI")
 st.markdown("Turn any topic into a short video with AI-generated narration and images.")
-
 
 # --- API Key Management ---
 st.sidebar.header("🔑 API Configuration")
@@ -44,7 +33,6 @@ st.session_state.stability_key = st.sidebar.text_input(
 st.session_state.hf_token = st.sidebar.text_input(
     label="Enter your Hugging Face Token", type="password", placeholder="Paste Hugging Face token here..."
 )
-
 
 # --- Helper Functions ---
 
@@ -65,36 +53,7 @@ def generate_story_with_hf(topic):
         raise ConnectionError(f"Hugging Face API Error: {response.text}")
     return response.json()[0]['generated_text']
 
-
 # --- Image Generation ---
-@st.cache_resource(show_spinner="Loading local image models...")
-def load_diffusion_pipelines():
-    base = AutoPipelineForText2Image.from_pretrained("stabilityai/stable-diffusion-xl-base-1.0", torch_dtype=torch.float16, variant="fp16", use_safensors=True).to("cuda")
-    refiner = AutoPipelineForText2Image.from_pretrained("stabilityai/stable-diffusion-xl-refiner-1.0", torch_dtype=torch.float16, use_safensors=True, variant="fp16").to("cuda")
-    return base, refiner
-
-def generate_images_local(image_prompts):
-    base, refiner = load_diffusion_pipelines()
-    image_files = []
-    
-    latent_images = []
-    for prompt in image_prompts:
-        styled_prompt = f"{prompt}, masterpiece, 8k, high detail, cinematic lighting"
-        negative_prompt = "ugly, blurry, deformed, disfigured, poor details, bad anatomy"
-        latent = base(prompt=styled_prompt, negative_prompt=negative_prompt, output_type="latent").images
-        latent_images.append(latent)
-
-    for i, latent in enumerate(latent_images):
-        prompt = image_prompts[i]
-        styled_prompt = f"{prompt}, masterpiece, 8k, high detail, cinematic lighting"
-        negative_prompt = "ugly, blurry, deformed, disfigured, poor details, bad anatomy"
-        img = refiner(prompt=styled_prompt, negative_prompt=negative_prompt, image=latent).images[0]
-        filename = f"generated_image_{i}.png"
-        img.save(filename)
-        image_files.append(filename)
-    
-    return image_files
-    
 def generate_images_api(image_prompts):
     image_files = []
     for i, prompt in enumerate(image_prompts):
@@ -115,7 +74,6 @@ def generate_images_api(image_prompts):
         image_files.append(filename)
     return image_files
 
-
 # --- Video Generation ---
 def create_video_with_ffmpeg(story_text, image_files):
     narration_file = "narration.mp3"
@@ -133,23 +91,17 @@ def create_video_with_ffmpeg(story_text, image_files):
     video_filename = "final_video.mp4"
     (
         ffmpeg
-        .output(video_stream, audio_stream, video_filename, vcodec='libx24', acodec='aac', pix_fmt='yuv420p')
+        .output(video_stream, audio_stream, video_filename, vcodec='libx264', acodec='aac', pix_fmt='yuv420p')
         .overwrite_output()
         .run(quiet=True)
     )
     return video_filename, narration_file
 
-
 # --- Main App Interface ---
 st.sidebar.header("⚙️ Model Selection")
 text_model_option = st.sidebar.selectbox("Choose a Storyteller:", ("Google Gemini", "Hugging Face (Llama 3)"))
-
-# Disable GPU option if torch/cuda is not available
-image_model_options = ["Stability AI API (CPU Friendly)"]
-if IS_GPU_AVAILABLE:
-    image_model_options.append("Local SDXL (Requires GPU)")
-image_model_option = st.sidebar.selectbox("Choose an Image Artist:", image_model_options)
-
+# Image model is now API-only, so no selection is needed.
+st.sidebar.info("Image generation uses the Stability AI API.")
 
 topic = st.text_input("Enter a topic for your video:", placeholder="e.g., A robot discovering a garden")
 
@@ -160,7 +112,8 @@ if st.button("Generate Video ✨", type="primary"):
         key_needed_msg = "Please enter your Google Gemini API key."
     elif text_model_option == "Hugging Face (Llama 3)" and not st.session_state.hf_token:
         key_needed_msg = "Please enter your Hugging Face API token."
-    elif image_model_option == "Stability AI API (CPU Friendly)" and not st.session_state.stability_key:
+    
+    if not st.session_state.stability_key:
         key_needed_msg = "Please enter your Stability AI API key."
 
     if key_needed_msg:
@@ -179,17 +132,13 @@ if st.button("Generate Video ✨", type="primary"):
                         story_text = generate_story_with_gemini(topic)
                     else:
                         story_text = generate_story_with_hf(topic)
-                        st.markdown(story_text) # Display non-streamed text
+                        st.markdown(story_text)
                 
                 # 2. Generate Images
-                status.update(label="Step 2: Creating images...")
+                status.update(label="Step 2: Creating images with Stability AI...")
                 sentences = re.split(r'(?<!\w\w.)(?<![A-Z][a-z].)(?<=\.|\?)\s', story_text)
                 image_prompts = [sentences[0], sentences[-1]] if len(sentences) >= 2 else [topic, topic]
-                
-                if image_model_option == "Stability AI API (CPU Friendly)":
-                    image_files = generate_images_api(image_prompts)
-                else: # Local GPU
-                    image_files = generate_images_local(image_prompts)
+                image_files = generate_images_api(image_prompts)
                 
                 st.info("🖼️ Images Generated")
                 cols = st.columns(len(image_files))
